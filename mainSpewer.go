@@ -4,41 +4,44 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
 	"time"
 )
 
-// Struktura danych
 type SensorData struct {
 	SensorID    string  `json:"sensor_id"`
 	Timestamp   string  `json:"timestamp"`
-	PM25        float64 `json:"pm25"`
-	PM10        float64 `json:"pm10"`
+	PM25        int     `json:"pm25"`
+	PM10        int     `json:"pm10"`
 	CO2         int     `json:"co2"`
 	Temperature float64 `json:"temperature"`
 	Pressure    int     `json:"pressure"`
 	Humidity    int     `json:"humidity"`
 }
 
+func roundToTwo(val float64) float64 {
+	return math.Round(val*100) / 100
+}
+
 func generateData(sensorID string) SensorData {
-	// Prosta symulacja danych
+	now := time.Now()
+	formattedTime := fmt.Sprintf("Date: %s Time: %s", now.Format("2006-01-02"), now.Format("15:04:05"))
 	return SensorData{
 		SensorID:    sensorID,
-		Timestamp:   time.Now().Format(time.RFC3339),
-		PM25:        10.0 + rand.Float64()*50.0,
-		PM10:        20.0 + rand.Float64()*60.0,
+		Timestamp:   formattedTime,
+		PM25:        int(10.0 + rand.Float64()*50.0),
+		PM10:        int(20.0 + rand.Float64()*60.0),
 		CO2:         400 + rand.Intn(400),
-		Temperature: -5.0 + rand.Float64()*35.0,
+		Temperature: roundToTwo(-5.0 + rand.Float64()*35.0),
 		Pressure:    990 + rand.Intn(40),
 		Humidity:    30 + rand.Intn(70),
 	}
 }
 
 func main() {
-	// 1. Konfiguracja ze zmiennych środowiskowych (Environment Variables)
-	// Domyślnie localhost, jeśli nie podano inaczej
 	endpointURL := os.Getenv("TARGET_URL")
 	if endpointURL == "" {
 		endpointURL = "http://localhost:8000/api/data"
@@ -49,38 +52,36 @@ func main() {
 		sensorID = "test-sensor-01"
 	}
 
-	// Pobieramy interwał (np. "15m", "10s"). Domyślnie 15 minut.
-	intervalStr := os.Getenv("INTERVAL")
-	if intervalStr == "" {
-		intervalStr = "15m"
-	}
-	interval, err := time.ParseDuration(intervalStr)
-	if err != nil {
-		fmt.Println("Błąd formatu czasu, ustawiam 15 minut")
-		interval = 15 * time.Minute
-	}
+	interval := 30 * time.Second
 
-	fmt.Printf("Start symulatora %s. Cel: %s. Interwał: %s\n", sensorID, endpointURL, interval)
+	fmt.Printf("Simulation start for: %s\nTarget: %s\nInterval: %s\n", sensorID, endpointURL, interval)
+	fmt.Println("--------------------------------------------------")
 
-	// Inicjalizacja generatora losowości
 	rand.Seed(time.Now().UnixNano())
+
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Pętla wysyłania
 	for {
 		data := generateData(sensorID)
-		jsonData, _ := json.Marshal(data)
+		jsonData, _ := json.MarshalIndent(data, "", "  ")
 
-		// Logowanie wysyłki
-		fmt.Printf("Wysyłam dane z %s... ", data.Timestamp)
+		fmt.Printf("[%s] Transmission attempt... ", data.Timestamp)
 
-		resp, err := http.Post(endpointURL, "application/json", bytes.NewBuffer(jsonData))
+		resp, err := client.Post(endpointURL, "application/json", bytes.NewBuffer(jsonData))
+
 		if err != nil {
-			// Wypisujemy błąd, ale nie przerywamy programu (serwer może chwilowo nie działać)
-			fmt.Printf("BŁĄD: %v\n", err)
+			// If server is unreachable
+			fmt.Printf("\n!!! Connection Error: %v\n", err)
+			fmt.Println(">>> Dumping data to console:")
+			fmt.Println(string(jsonData))
+			fmt.Println("--------------------------------------------------")
 		} else {
+			// If server responds
 			fmt.Printf("OK (Status: %s)\n", resp.Status)
 			resp.Body.Close()
 		}
